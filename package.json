@@ -1,0 +1,15 @@
+{
+  "name": "limit-order-exchange",
+  "version": "0.1.0",
+  "description": "Sell-only limit-order exchange scaffold",
+  "type": "module",
+  "scripts": {
+    "test": "vitest --run tests/**",
+    "test:watch": "vitest",
+    "build": "forge build"
+  },
+  "dependencies": {
+    "viem": "^2.45.1",
+    "vitest": "^4.0.18"
+  }
+}

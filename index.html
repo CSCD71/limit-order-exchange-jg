@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sell-Only Limit-Order Exchange</title>
+    <link rel="stylesheet" href="static/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <div class="logo" aria-hidden="true">LO</div>
+        <div class="brand-text">
+          <h1>Limit-Order Exchange</h1>
+          <p>Sell-only | EIP-712 | Partial Fills</p>
+        </div>
+      </div>
+      <div class="wallet">
+        <button id="connectButton" class="btn">Connect Wallet</button>
+        <div id="walletStatus" class="status"></div>
+      </div>
+    </header>
+
+    <main class="content">
+      <section class="panel">
+        <h2>Exchange Contract</h2>
+        <p id="contractLine" class="muted">Deploy address not configured yet.</p>
+        <a id="etherscanLink" href="#" target="_blank" rel="noreferrer" hidden>Open on Sepolia Etherscan</a>
+      </section>
+
+      <section class="panel">
+        <h2>Create & Sign Sell Order (Scaffold)</h2>
+        <form id="orderForm" class="form">
+          <label>
+            Token Sell Address
+            <input id="tokenSell" placeholder="0x..." required />
+          </label>
+          <label>
+            Token Buy Address
+            <input id="tokenBuy" placeholder="0x..." required />
+          </label>
+          <label>
+            Amount Sell (raw)
+            <input id="amountSell" type="number" min="1" step="1" required />
+          </label>
+          <label>
+            Amount Buy (raw)
+            <input id="amountBuy" type="number" min="1" step="1" required />
+          </label>
+          <label>
+            Expiry (unix timestamp)
+            <input id="expiry" type="number" min="1" step="1" required />
+          </label>
+          <label>
+            Nonce
+            <input id="nonce" type="number" min="0" step="1" required />
+          </label>
+          <div class="actions">
+            <button type="submit" class="btn">Sign Typed Data</button>
+          </div>
+        </form>
+        <pre id="signedPayload" class="code"></pre>
+      </section>
+
+      <section class="panel">
+        <h2>Next Step</h2>
+        <p class="muted">接下来我们会逐步实现：创建订单、链上发布、成交撮合（手动填单 + 最优价格聚合）。</p>
+      </section>
+    </main>
+
+    <script type="module" src="static/app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,20 @@
+# MAC OS
+Thumbs.db
+.DS_Store
+
+# Node
+node_modules
+
+# Foundry
+/cache
+/out
+/lib
+/broadcast
+
+# Env
+.env
+
+# Misc
+*.lock
+*.old
+*.nogit
