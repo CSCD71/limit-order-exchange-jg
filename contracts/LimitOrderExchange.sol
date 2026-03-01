@@ -117,8 +117,11 @@ contract LimitOrderExchange is EIP712 {
         uint256 length = orders.length;
         if (length != signatures.length || length != fillAmountSellList.length) revert InvalidAmount();
 
-        for (uint256 i = 0; i < length; i++) {
+        for (uint256 i = 0; i < length; ) {
             _fillOrder(orders[i], signatures[i], fillAmountSellList[i], msg.sender);
+            unchecked {
+                i++;
+            }
         }
     }
 
@@ -198,7 +201,11 @@ contract LimitOrderExchange is EIP712 {
     }
 
     function _validateOrderCore(Order calldata order) internal pure {
-        if (!_isOrderCoreValid(order)) revert InvalidAmount();
+        if (order.seller == address(0)) revert InvalidSeller();
+        if (order.tokenSell == address(0) || order.tokenBuy == address(0) || order.tokenSell == order.tokenBuy) {
+            revert InvalidTokenPair();
+        }
+        if (order.amountSell == 0 || order.amountBuy == 0) revert InvalidAmount();
     }
 
     function _isOrderCoreValid(Order calldata order) internal pure returns (bool) {

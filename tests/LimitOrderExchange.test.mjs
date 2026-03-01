@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
   createPublicClient,
   createWalletClient,
@@ -19,7 +19,8 @@ const client = createPublicClient({ chain: foundry, transport: rpc });
 const privateKeys = [
   "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
   "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",
-  "0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a"
+  "0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a",
+  "0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6"
 ];
 
 function loadContract(contract, source = `${contract}.sol`) {
@@ -32,22 +33,91 @@ describe("LimitOrderExchange scaffold", () => {
   let seller;
   let buyer;
   let third;
+  let other;
 
   let exchange;
   let tokenA;
   let tokenB;
 
-  beforeAll(async () => {
-    [seller, buyer, third] = privateKeys.map((pk) =>
-      createWalletClient({
-        chain: foundry,
-        transport: rpc,
-        account: privateKeyToAccount(pk)
-      })
-    );
+  const one = parseUnits("1", 18);
 
+  function makeOrder({ nonce, amountSell, amountBuy, expiry }) {
+    return {
+      seller: seller.account.address,
+      tokenSell: tokenA.address,
+      tokenBuy: tokenB.address,
+      amountSell,
+      amountBuy,
+      expiry,
+      nonce
+    };
+  }
+
+  async function signOrder(order) {
+    return seller.signTypedData({
+      domain: {
+        name: "SellOnlyLimitOrderExchange",
+        version: "1",
+        chainId: foundry.id,
+        verifyingContract: exchange.address
+      },
+      primaryType: "Order",
+      types: {
+        Order: [
+          { name: "seller", type: "address" },
+          { name: "tokenSell", type: "address" },
+          { name: "tokenBuy", type: "address" },
+          { name: "amountSell", type: "uint256" },
+          { name: "amountBuy", type: "uint256" },
+          { name: "expiry", type: "uint256" },
+          { name: "nonce", type: "uint256" }
+        ]
+      },
+      message: order
+    });
+  }
+
+  async function approveBaseAllowances() {
+    const amount = parseUnits("1000000", 18);
+
+    await client.waitForTransactionReceipt({
+      hash: await seller.writeContract({
+        ...tokenA,
+        functionName: "approve",
+        args: [exchange.address, amount]
+      })
+    });
+
+    await client.waitForTransactionReceipt({
+      hash: await buyer.writeContract({
+        ...tokenB,
+        functionName: "approve",
+        args: [exchange.address, amount]
+      })
+    });
+  }
+
+  async function mintBaseBalances() {
+    await client.waitForTransactionReceipt({
+      hash: await seller.writeContract({
+        ...tokenA,
+        functionName: "mint",
+        args: [seller.account.address, parseUnits("1000", 18)]
+      })
+    });
+
+    await client.waitForTransactionReceipt({
+      hash: await seller.writeContract({
+        ...tokenB,
+        functionName: "mint",
+        args: [buyer.account.address, parseUnits("1000", 18)]
+      })
+    });
+  }
+
+  async function deployFixture() {
     const exchangeArtifact = loadContract("LimitOrderExchange");
-    const mockArtifact = loadContract("MockERC20", "mocks/MockERC20.sol");
+    const mockArtifact = loadContract("MockERC20");
 
     const exchangeHash = await seller.deployContract({
       abi: exchangeArtifact.abi,
@@ -75,19 +145,22 @@ describe("LimitOrderExchange scaffold", () => {
     const tokenBReceipt = await client.waitForTransactionReceipt({ hash: tokenBHash });
     tokenB = { address: getAddress(tokenBReceipt.contractAddress), abi: mockArtifact.abi };
 
-    const mintAHash = await seller.writeContract({
-      ...tokenA,
-      functionName: "mint",
-      args: [seller.account.address, parseUnits("1000", 18)]
-    });
-    await client.waitForTransactionReceipt({ hash: mintAHash });
+    await mintBaseBalances();
+    await approveBaseAllowances();
+  }
 
-    const mintBHash = await seller.writeContract({
-      ...tokenB,
-      functionName: "mint",
-      args: [buyer.account.address, parseUnits("1000", 18)]
-    });
-    await client.waitForTransactionReceipt({ hash: mintBHash });
+  beforeAll(async () => {
+    [seller, buyer, third, other] = privateKeys.map((pk) =>
+      createWalletClient({
+        chain: foundry,
+        transport: rpc,
+        account: privateKeyToAccount(pk)
+      })
+    );
+  });
+
+  beforeEach(async () => {
+    await deployFixture();
   });
 
   it("deploys with EIP-712 domain name", async () => {
@@ -99,62 +172,37 @@ describe("LimitOrderExchange scaffold", () => {
     expect(domainName[1]).toBe("SellOnlyLimitOrderExchange");
   });
 
-  it("fills a signed order partially", async () => {
-    const amountSell = parseUnits("10", 18);
-    const amountBuy = parseUnits("20", 18);
-
-    const order = {
-      seller: seller.account.address,
-      tokenSell: tokenA.address,
-      tokenBuy: tokenB.address,
-      amountSell,
-      amountBuy,
-      expiry: BigInt(Math.floor(Date.now() / 1000) + 3600),
-      nonce: 1n
-    };
-
-    const signature = await seller.signTypedData({
-      domain: {
-        name: "SellOnlyLimitOrderExchange",
-        version: "1",
-        chainId: foundry.id,
-        verifyingContract: exchange.address
-      },
-      primaryType: "Order",
-      types: {
-        Order: [
-          { name: "seller", type: "address" },
-          { name: "tokenSell", type: "address" },
-          { name: "tokenBuy", type: "address" },
-          { name: "amountSell", type: "uint256" },
-          { name: "amountBuy", type: "uint256" },
-          { name: "expiry", type: "uint256" },
-          { name: "nonce", type: "uint256" }
-        ]
-      },
-      message: order
+  it("publishes signed order as event", async () => {
+    const order = makeOrder({
+      nonce: 1n,
+      amountSell: parseUnits("10", 18),
+      amountBuy: parseUnits("20", 18),
+      expiry: BigInt(Math.floor(Date.now() / 1000) + 3600)
     });
+    const signature = await signOrder(order);
 
-    const approveSellHash = await seller.writeContract({
-      ...tokenA,
-      functionName: "approve",
-      args: [exchange.address, amountSell]
-    });
-    await client.waitForTransactionReceipt({ hash: approveSellHash });
-
-    const approveBuyHash = await buyer.writeContract({
-      ...tokenB,
-      functionName: "approve",
-      args: [exchange.address, amountBuy]
-    });
-    await client.waitForTransactionReceipt({ hash: approveBuyHash });
-
-    const publishHash = await seller.writeContract({
+    const txHash = await seller.writeContract({
       ...exchange,
       functionName: "publishOrder",
       args: [order, signature]
     });
-    await client.waitForTransactionReceipt({ hash: publishHash });
+    const receipt = await client.waitForTransactionReceipt({ hash: txHash });
+
+    const log = receipt.logs.find((x) => x.address.toLowerCase() === exchange.address.toLowerCase());
+    expect(log).toBeTruthy();
+
+    const parsed = decodeEventLog({ abi: exchange.abi, data: log.data, topics: log.topics });
+    expect(parsed.eventName).toBe("OrderPublished");
+  });
+
+  it("fills a signed order partially and updates balances", async () => {
+    const order = makeOrder({
+      nonce: 2n,
+      amountSell: parseUnits("10", 18),
+      amountBuy: parseUnits("20", 18),
+      expiry: BigInt(Math.floor(Date.now() / 1000) + 3600)
+    });
+    const signature = await signOrder(order);
 
     const fillAmountSell = parseUnits("6", 18);
     const fillHash = await buyer.writeContract({
@@ -176,38 +224,270 @@ describe("LimitOrderExchange scaffold", () => {
 
     expect(parsed.eventName).toBe("OrderFilled");
 
-    const sellerTokenABalance = await client.readContract({
+    expect(parsed.args.fillAmountSell).toBe(fillAmountSell);
+    expect(parsed.args.fillAmountBuy).toBe(parseUnits("12", 18));
+    expect(parsed.args.remainingAmountSell).toBe(parseUnits("4", 18));
+
+    const sellerTokenAAfter = await client.readContract({
       ...tokenA,
       functionName: "balanceOf",
       args: [seller.account.address]
     });
-    const buyerTokenABalance = await client.readContract({
+    const buyerTokenAAfter = await client.readContract({
       ...tokenA,
       functionName: "balanceOf",
       args: [buyer.account.address]
     });
 
-    const sellerTokenBBalance = await client.readContract({
+    const sellerTokenBAfter = await client.readContract({
       ...tokenB,
       functionName: "balanceOf",
       args: [seller.account.address]
     });
-    const buyerTokenBBalance = await client.readContract({
+    const buyerTokenBAfter = await client.readContract({
       ...tokenB,
       functionName: "balanceOf",
       args: [buyer.account.address]
     });
 
-    expect(sellerTokenABalance).toBe(parseUnits("994", 18));
-    expect(buyerTokenABalance).toBe(parseUnits("6", 18));
-    expect(sellerTokenBBalance).toBe(parseUnits("12", 18));
-    expect(buyerTokenBBalance).toBe(parseUnits("988", 18));
+    expect(sellerTokenAAfter).toBe(parseUnits("994", 18));
+    expect(buyerTokenAAfter).toBe(parseUnits("6", 18));
+    expect(sellerTokenBAfter).toBe(parseUnits("12", 18));
+    expect(buyerTokenBAfter).toBe(parseUnits("988", 18));
+
+    const remaining = await client.readContract({
+      ...exchange,
+      functionName: "remainingAmountSell",
+      args: [order]
+    });
+    expect(remaining).toBe(parseUnits("4", 18));
+  });
+
+  it("supports bulk fill across multiple orders", async () => {
+    const order1 = makeOrder({
+      nonce: 3n,
+      amountSell: parseUnits("10", 18),
+      amountBuy: parseUnits("20", 18),
+      expiry: BigInt(Math.floor(Date.now() / 1000) + 3600)
+    });
+    const order2 = makeOrder({
+      nonce: 4n,
+      amountSell: parseUnits("5", 18),
+      amountBuy: parseUnits("15", 18),
+      expiry: BigInt(Math.floor(Date.now() / 1000) + 3600)
+    });
+
+    const sig1 = await signOrder(order1);
+    const sig2 = await signOrder(order2);
+
+    const hash = await buyer.writeContract({
+      ...exchange,
+      functionName: "fillOrders",
+      args: [[order1, order2], [sig1, sig2], [parseUnits("6", 18), parseUnits("5", 18)]]
+    });
+    await client.waitForTransactionReceipt({ hash });
+
+    const buyerTokenAAfter = await client.readContract({
+      ...tokenA,
+      functionName: "balanceOf",
+      args: [buyer.account.address]
+    });
+    expect(buyerTokenAAfter).toBe(parseUnits("11", 18));
+
+    const sellerTokenBAfter = await client.readContract({
+      ...tokenB,
+      functionName: "balanceOf",
+      args: [seller.account.address]
+    });
+    expect(sellerTokenBAfter).toBe(parseUnits("27", 18));
+  });
+
+  it("rejects invalid signature", async () => {
+    const order = makeOrder({
+      nonce: 5n,
+      amountSell: parseUnits("10", 18),
+      amountBuy: parseUnits("20", 18),
+      expiry: BigInt(Math.floor(Date.now() / 1000) + 3600)
+    });
+    const wrongSignature = await buyer.signTypedData({
+      domain: {
+        name: "SellOnlyLimitOrderExchange",
+        version: "1",
+        chainId: foundry.id,
+        verifyingContract: exchange.address
+      },
+      primaryType: "Order",
+      types: {
+        Order: [
+          { name: "seller", type: "address" },
+          { name: "tokenSell", type: "address" },
+          { name: "tokenBuy", type: "address" },
+          { name: "amountSell", type: "uint256" },
+          { name: "amountBuy", type: "uint256" },
+          { name: "expiry", type: "uint256" },
+          { name: "nonce", type: "uint256" }
+        ]
+      },
+      message: order
+    });
+
+    await expect(
+      buyer.writeContract({
+        ...exchange,
+        functionName: "fillOrder",
+        args: [order, wrongSignature, parseUnits("1", 18)]
+      })
+    ).rejects.toThrow();
+  });
+
+  it("rejects canceled order", async () => {
+    const order = makeOrder({
+      nonce: 6n,
+      amountSell: parseUnits("10", 18),
+      amountBuy: parseUnits("20", 18),
+      expiry: BigInt(Math.floor(Date.now() / 1000) + 3600)
+    });
+    const signature = await signOrder(order);
+
+    await client.waitForTransactionReceipt({
+      hash: await seller.writeContract({
+        ...exchange,
+        functionName: "cancelOrder",
+        args: [order]
+      })
+    });
+
+    await expect(
+      buyer.writeContract({
+        ...exchange,
+        functionName: "fillOrder",
+        args: [order, signature, parseUnits("1", 18)]
+      })
+    ).rejects.toThrow();
+  });
+
+  it("rejects expired order", async () => {
+    const nowBlock = await client.getBlock();
+    const order = makeOrder({
+      nonce: 7n,
+      amountSell: parseUnits("10", 18),
+      amountBuy: parseUnits("20", 18),
+      expiry: nowBlock.timestamp + 1n
+    });
+    const signature = await signOrder(order);
+
+    await client.request({ method: "anvil_increaseTime", params: [2] });
+    await client.request({ method: "anvil_mine", params: [1] });
+
+    await expect(
+      buyer.writeContract({
+        ...exchange,
+        functionName: "fillOrder",
+        args: [order, signature, parseUnits("1", 18)]
+      })
+    ).rejects.toThrow();
+  });
+
+  it("rejects non-integral partial fill ratio", async () => {
+    const order = makeOrder({
+      nonce: 8n,
+      amountSell: 3n,
+      amountBuy: 10n,
+      expiry: BigInt(Math.floor(Date.now() / 1000) + 3600)
+    });
+    const signature = await signOrder(order);
+
+    await expect(
+      buyer.writeContract({
+        ...exchange,
+        functionName: "fillOrder",
+        args: [order, signature, 1n]
+      })
+    ).rejects.toThrow();
+  });
+
+  it("isFillable returns true for a valid candidate", async () => {
+    const order = makeOrder({
+      nonce: 9n,
+      amountSell: parseUnits("10", 18),
+      amountBuy: parseUnits("20", 18),
+      expiry: BigInt(Math.floor(Date.now() / 1000) + 3600)
+    });
+    const signature = await signOrder(order);
+
+    const ok = await client.readContract({
+      ...exchange,
+      functionName: "isFillable",
+      args: [order, signature, parseUnits("4", 18), buyer.account.address]
+    });
+    expect(ok).toBe(true);
+  });
+
+  it("isFillable returns false when buyer has no approval", async () => {
+    const order = makeOrder({
+      nonce: 10n,
+      amountSell: parseUnits("10", 18),
+      amountBuy: parseUnits("20", 18),
+      expiry: BigInt(Math.floor(Date.now() / 1000) + 3600)
+    });
+    const signature = await signOrder(order);
+
+    await client.waitForTransactionReceipt({
+      hash: await buyer.writeContract({
+        ...tokenB,
+        functionName: "approve",
+        args: [exchange.address, 0n]
+      })
+    });
 
     const isFillable = await client.readContract({
       ...exchange,
       functionName: "isFillable",
-      args: [order, signature, parseUnits("4", 18), third.account.address]
+      args: [order, signature, parseUnits("4", 18), buyer.account.address]
     });
     expect(isFillable).toBe(false);
+  });
+
+  it("prevents overfill after full fill", async () => {
+    const order = makeOrder({
+      nonce: 11n,
+      amountSell: parseUnits("2", 18),
+      amountBuy: parseUnits("4", 18),
+      expiry: BigInt(Math.floor(Date.now() / 1000) + 3600)
+    });
+    const signature = await signOrder(order);
+
+    await client.waitForTransactionReceipt({
+      hash: await buyer.writeContract({
+        ...exchange,
+        functionName: "fillOrder",
+        args: [order, signature, parseUnits("2", 18)]
+      })
+    });
+
+    await expect(
+      buyer.writeContract({
+        ...exchange,
+        functionName: "fillOrder",
+        args: [order, signature, one]
+      })
+    ).rejects.toThrow();
+  });
+
+  it("only seller can cancel their nonce", async () => {
+    const order = makeOrder({
+      nonce: 12n,
+      amountSell: parseUnits("10", 18),
+      amountBuy: parseUnits("20", 18),
+      expiry: BigInt(Math.floor(Date.now() / 1000) + 3600)
+    });
+
+    await expect(
+      other.writeContract({
+        ...exchange,
+        functionName: "cancelOrder",
+        args: [order]
+      })
+    ).rejects.toThrow();
   });
 });
