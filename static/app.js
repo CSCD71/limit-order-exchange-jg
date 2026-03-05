@@ -387,7 +387,7 @@ function getMarketItemLabel(order) {
   return `${shortAddress(order.seller)}#${order.nonce.toString()}`;
 }
 
-async function getMarketUnfillableReasons(exchange, order, signature, fillAmountSell) {
+async function getMarketUnfillableReasons(exchange, order, fillAmountSell) {
   const reasons = [];
 
   if (!order.seller || order.seller === "0x0000000000000000000000000000000000000000") {
@@ -436,7 +436,7 @@ async function getMarketUnfillableReasons(exchange, order, signature, fillAmount
     functionName: "allowance",
     args: [order.seller, exchange.address]
   });
-  if (sellerAllowance < fillAmountSell) reasons.push(`Seller allowance too low with fillAmountSell ${fillAmountSell}, ${sellerAllowance}`);
+  if (sellerAllowance < fillAmountSell) reasons.push(`seller allowance low (need ${fillAmountSell}, have ${sellerAllowance})`);
 
   const sellerBalance = await publicClient.readContract({
     abi: ERC20_ABI,
@@ -444,7 +444,7 @@ async function getMarketUnfillableReasons(exchange, order, signature, fillAmount
     functionName: "balanceOf",
     args: [order.seller]
   });
-  if (sellerBalance < fillAmountSell) reasons.push("seller balance low");
+  if (sellerBalance < fillAmountSell) reasons.push(`seller balance low (need ${fillAmountSell}, have ${sellerBalance})`);
 
   return reasons;
 }
@@ -1013,7 +1013,8 @@ async function executeMarketFill(event) {
     const tokenBuy = marketTokenBuy.value.trim().toLowerCase();
     const targetHuman = marketTargetAmount.value.trim();
     const sellDecimals = await readTokenDecimals(marketTokenSell.value.trim());
-    let remainingTarget = parseUnits(targetHuman, sellDecimals);
+    const targetAmountSell = parseUnits(targetHuman, sellDecimals);
+    let remainingTarget = targetAmountSell;
 
     const exchange = getExchangeContract();
     const candidates = [];
@@ -1050,11 +1051,39 @@ async function executeMarketFill(event) {
     const selectedSignatures = [];
     const selectedFills = [];
     const skippedItems = [];
+    const sellerAvailableByKey = new Map();
     let totalBuyTokenNeeded = 0n;
 
     for (const item of candidates) {
       if (remainingTarget <= 0n) break;
+
+      const sellerKey = `${item.order.seller.toLowerCase()}-${item.order.tokenSell.toLowerCase()}`;
+      let sellerAvailable = sellerAvailableByKey.get(sellerKey);
+      if (sellerAvailable === undefined) {
+        const sellerAllowance = await publicClient.readContract({
+          abi: ERC20_ABI,
+          address: item.order.tokenSell,
+          functionName: "allowance",
+          args: [item.order.seller, exchange.address]
+        });
+        const sellerBalance = await publicClient.readContract({
+          abi: ERC20_ABI,
+          address: item.order.tokenSell,
+          functionName: "balanceOf",
+          args: [item.order.seller]
+        });
+        sellerAvailable = sellerAllowance < sellerBalance ? sellerAllowance : sellerBalance;
+      }
+
+      if (sellerAvailable <= 0n) {
+        skippedItems.push(`${getMarketItemLabel(item.order)}: seller allowance/balance exhausted`);
+        continue;
+      }
+
       let fillAmountSell = item.remaining < remainingTarget ? item.remaining : remainingTarget;
+      if (fillAmountSell > sellerAvailable) {
+        fillAmountSell = sellerAvailable;
+      }
       fillAmountSell = floorFillToIntegral(fillAmountSell, item.order);
       if (fillAmountSell <= 0n) {
         skippedItems.push(`${getMarketItemLabel(item.order)}: fill rounds to zero (integral ratio)`);
@@ -1067,7 +1096,7 @@ async function executeMarketFill(event) {
         args: [item.order, item.signature, fillAmountSell, "0x0000000000000000000000000000000000000000"]
       });
       if (!isFillable) {
-        const reasons = await getMarketUnfillableReasons(exchange, item.order, item.signature, fillAmountSell);
+        const reasons = await getMarketUnfillableReasons(exchange, item.order, fillAmountSell);
         skippedItems.push(`${getMarketItemLabel(item.order)}: ${reasons.join(", ")}`);
         continue;
       }
@@ -1079,6 +1108,7 @@ async function executeMarketFill(event) {
       selectedFills.push(fillAmountSell);
       totalBuyTokenNeeded += fillAmountBuy;
       remainingTarget -= fillAmountSell;
+      sellerAvailableByKey.set(sellerKey, sellerAvailable - fillAmountSell);
     }
 
     if (!selectedOrders.length) {
@@ -1086,6 +1116,37 @@ async function executeMarketFill(event) {
         ? ` Skipped sample: ${skippedItems.slice(0, 5).join(" | ")}`
         : "";
       throw new Error(`No fillable published orders found.${diagnostics}`);
+    }
+
+    if (remainingTarget > 0n) {
+      const totalFillableSell = targetAmountSell - remainingTarget;
+      const diagnostics = skippedItems.length
+        ? ` Skipped sample: ${skippedItems.slice(0, 5).join(" | ")}`
+        : "";
+      throw new Error(
+        `Target exceeds fillable liquidity. Requested ${formatUnits(targetAmountSell, sellDecimals)} tokenSell, ` +
+          `but currently fillable total is ${formatUnits(totalFillableSell, sellDecimals)} (raw: ${totalFillableSell}).` +
+          `${diagnostics}`
+      );
+    }
+
+    const previewLines = selectedOrders.map((order, index) => {
+      const fillSell = selectedFills[index];
+      const fillBuy = (fillSell * order.amountBuy) / order.amountSell;
+      return `${index + 1}. ${getMarketItemLabel(order)} fillSell=${fillSell.toString()} fillBuy=${fillBuy.toString()}`;
+    });
+
+    const previewText =
+      `Found ${selectedOrders.length} fillable order(s).\n` +
+      `Total buy token needed: ${totalBuyTokenNeeded.toString()}\n\n` +
+      `${previewLines.join("\n")}\n\n` +
+      `Confirm to execute fillOrders?`;
+
+    setMarketStatus(`Ready to execute ${selectedOrders.length} order(s). Waiting for your confirmation...`);
+    const confirmed = window.confirm(previewText);
+    if (!confirmed) {
+      setMarketStatus("Market execution canceled by user.");
+      return;
     }
 
     await ensureAllowance(marketTokenBuy.value.trim(), account, exchange.address, totalBuyTokenNeeded, setMarketStatus);
