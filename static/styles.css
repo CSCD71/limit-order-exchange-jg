@@ -103,10 +103,23 @@ input {
   padding: 9px 10px;
 }
 
+textarea {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #10162a;
+  color: var(--text);
+  padding: 9px 10px;
+  resize: vertical;
+  min-height: 140px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
 .actions {
   margin-top: 6px;
   display: flex;
   justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .btn {

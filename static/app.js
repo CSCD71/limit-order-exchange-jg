@@ -1,4 +1,4 @@
-import { createWalletClient, custom } from "https://esm.sh/viem@2.19.4";
+import { createPublicClient, createWalletClient, custom, parseUnits } from "https://esm.sh/viem@2.19.4";
 import * as chains from "https://esm.sh/viem@2.19.4/chains";
 
 const connectButton = document.getElementById("connectButton");
@@ -6,17 +6,402 @@ const walletStatus = document.getElementById("walletStatus");
 const contractLine = document.getElementById("contractLine");
 const etherscanLink = document.getElementById("etherscanLink");
 const orderForm = document.getElementById("orderForm");
+const publishButton = document.getElementById("publishButton");
 const signedPayload = document.getElementById("signedPayload");
+const signMeta = document.getElementById("signMeta");
+const orderStatus = document.getElementById("orderStatus");
+
+const manualFillForm = document.getElementById("manualFillForm");
+const manualOrderPayload = document.getElementById("manualOrderPayload");
+const manualFillAmount = document.getElementById("manualFillAmount");
+const approveBuyTokenButton = document.getElementById("approveBuyTokenButton");
+const manualStatus = document.getElementById("manualStatus");
+
+const marketForm = document.getElementById("marketForm");
+const marketTokenSell = document.getElementById("marketTokenSell");
+const marketTokenBuy = document.getElementById("marketTokenBuy");
+const marketTargetAmount = document.getElementById("marketTargetAmount");
+const refreshOrdersButton = document.getElementById("refreshOrdersButton");
+const marketStatus = document.getElementById("marketStatus");
+
+const EXCHANGE_ABI = [
+  {
+    type: "function",
+    name: "publishOrder",
+    stateMutability: "nonpayable",
+    inputs: [
+      {
+        name: "order",
+        type: "tuple",
+        components: [
+          { name: "seller", type: "address" },
+          { name: "tokenSell", type: "address" },
+          { name: "tokenBuy", type: "address" },
+          { name: "amountSell", type: "uint256" },
+          { name: "amountBuy", type: "uint256" },
+          { name: "expiry", type: "uint256" },
+          { name: "nonce", type: "uint256" }
+        ]
+      },
+      { name: "signature", type: "bytes" }
+    ],
+    outputs: []
+  },
+  {
+    type: "function",
+    name: "fillOrder",
+    stateMutability: "nonpayable",
+    inputs: [
+      {
+        name: "order",
+        type: "tuple",
+        components: [
+          { name: "seller", type: "address" },
+          { name: "tokenSell", type: "address" },
+          { name: "tokenBuy", type: "address" },
+          { name: "amountSell", type: "uint256" },
+          { name: "amountBuy", type: "uint256" },
+          { name: "expiry", type: "uint256" },
+          { name: "nonce", type: "uint256" }
+        ]
+      },
+      { name: "signature", type: "bytes" },
+      { name: "fillAmountSell", type: "uint256" }
+    ],
+    outputs: [{ name: "fillAmountBuy", type: "uint256" }]
+  },
+  {
+    type: "function",
+    name: "fillOrders",
+    stateMutability: "nonpayable",
+    inputs: [
+      {
+        name: "orders",
+        type: "tuple[]",
+        components: [
+          { name: "seller", type: "address" },
+          { name: "tokenSell", type: "address" },
+          { name: "tokenBuy", type: "address" },
+          { name: "amountSell", type: "uint256" },
+          { name: "amountBuy", type: "uint256" },
+          { name: "expiry", type: "uint256" },
+          { name: "nonce", type: "uint256" }
+        ]
+      },
+      { name: "signatures", type: "bytes[]" },
+      { name: "fillAmountSellList", type: "uint256[]" }
+    ],
+    outputs: []
+  },
+  {
+    type: "function",
+    name: "isFillable",
+    stateMutability: "view",
+    inputs: [
+      {
+        name: "order",
+        type: "tuple",
+        components: [
+          { name: "seller", type: "address" },
+          { name: "tokenSell", type: "address" },
+          { name: "tokenBuy", type: "address" },
+          { name: "amountSell", type: "uint256" },
+          { name: "amountBuy", type: "uint256" },
+          { name: "expiry", type: "uint256" },
+          { name: "nonce", type: "uint256" }
+        ]
+      },
+      { name: "signature", type: "bytes" },
+      { name: "fillAmountSell", type: "uint256" },
+      { name: "buyer", type: "address" }
+    ],
+    outputs: [{ name: "", type: "bool" }]
+  },
+  {
+    type: "function",
+    name: "remainingAmountSell",
+    stateMutability: "view",
+    inputs: [
+      {
+        name: "order",
+        type: "tuple",
+        components: [
+          { name: "seller", type: "address" },
+          { name: "tokenSell", type: "address" },
+          { name: "tokenBuy", type: "address" },
+          { name: "amountSell", type: "uint256" },
+          { name: "amountBuy", type: "uint256" },
+          { name: "expiry", type: "uint256" },
+          { name: "nonce", type: "uint256" }
+        ]
+      }
+    ],
+    outputs: [{ name: "", type: "uint256" }]
+  },
+  {
+    type: "function",
+    name: "hashOrder",
+    stateMutability: "view",
+    inputs: [
+      {
+        name: "order",
+        type: "tuple",
+        components: [
+          { name: "seller", type: "address" },
+          { name: "tokenSell", type: "address" },
+          { name: "tokenBuy", type: "address" },
+          { name: "amountSell", type: "uint256" },
+          { name: "amountBuy", type: "uint256" },
+          { name: "expiry", type: "uint256" },
+          { name: "nonce", type: "uint256" }
+        ]
+      }
+    ],
+    outputs: [{ name: "", type: "bytes32" }]
+  },
+  {
+    type: "event",
+    name: "OrderPublished",
+    inputs: [
+      { indexed: true, name: "orderHash", type: "bytes32" },
+      { indexed: true, name: "seller", type: "address" },
+      { indexed: true, name: "tokenSell", type: "address" },
+      { indexed: false, name: "tokenBuy", type: "address" },
+      { indexed: false, name: "amountSell", type: "uint256" },
+      { indexed: false, name: "amountBuy", type: "uint256" },
+      { indexed: false, name: "expiry", type: "uint256" },
+      { indexed: false, name: "nonce", type: "uint256" },
+      { indexed: false, name: "signature", type: "bytes" }
+    ]
+  }
+];
+
+const ERC20_ABI = [
+  {
+    type: "function",
+    name: "decimals",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint8" }]
+  },
+  {
+    type: "function",
+    name: "symbol",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "string" }]
+  },
+  {
+    type: "function",
+    name: "allowance",
+    stateMutability: "view",
+    inputs: [
+      { name: "owner", type: "address" },
+      { name: "spender", type: "address" }
+    ],
+    outputs: [{ name: "", type: "uint256" }]
+  },
+  {
+    type: "function",
+    name: "approve",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "spender", type: "address" },
+      { name: "value", type: "uint256" }
+    ],
+    outputs: [{ name: "", type: "bool" }]
+  }
+];
 
 let account = null;
 let chainId = null;
+let walletClient = null;
+let publicClient = null;
+let exchangeAddress = null;
+let latestSigned = null;
+let knownOrders = [];
+let chainPublishedOrders = [];
+
+const KNOWN_ORDERS_KEY = "loe-known-orders";
 
 function setStatus(text) {
   walletStatus.textContent = text;
 }
 
+function setOrderStatus(text) {
+  orderStatus.textContent = text;
+}
+
+function setManualStatus(text) {
+  manualStatus.textContent = text;
+}
+
+function setMarketStatus(text) {
+  marketStatus.textContent = text;
+}
+
 function shortAddress(address) {
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
+}
+
+function parseOrderPayload(text) {
+  const payload = JSON.parse(text);
+  if (!payload?.order || !payload?.signature) throw new Error("Payload requires order and signature");
+  return {
+    order: {
+      seller: payload.order.seller,
+      tokenSell: payload.order.tokenSell,
+      tokenBuy: payload.order.tokenBuy,
+      amountSell: BigInt(payload.order.amountSell),
+      amountBuy: BigInt(payload.order.amountBuy),
+      expiry: BigInt(payload.order.expiry),
+      nonce: BigInt(payload.order.nonce)
+    },
+    signature: payload.signature
+  };
+}
+
+function serializeOrderPayload(order, signature) {
+  return JSON.stringify(
+    {
+      order: {
+        seller: order.seller,
+        tokenSell: order.tokenSell,
+        tokenBuy: order.tokenBuy,
+        amountSell: order.amountSell.toString(),
+        amountBuy: order.amountBuy.toString(),
+        expiry: order.expiry.toString(),
+        nonce: order.nonce.toString()
+      },
+      signature
+    },
+    null,
+    2
+  );
+}
+
+function gcd(a, b) {
+  let x = a;
+  let y = b;
+  while (y !== 0n) {
+    const t = x % y;
+    x = y;
+    y = t;
+  }
+  return x;
+}
+
+function floorFillToIntegral(fillAmountSell, order) {
+  const unit = order.amountSell / gcd(order.amountSell, order.amountBuy);
+  return (fillAmountSell / unit) * unit;
+}
+
+function loadKnownOrders() {
+  try {
+    const raw = localStorage.getItem(KNOWN_ORDERS_KEY);
+    if (!raw) return;
+    const list = JSON.parse(raw);
+    knownOrders = list.map((entry) => parseOrderPayload(JSON.stringify(entry)));
+  } catch {
+    knownOrders = [];
+  }
+}
+
+function saveKnownOrders() {
+  const list = knownOrders.map((entry) => ({
+    order: {
+      seller: entry.order.seller,
+      tokenSell: entry.order.tokenSell,
+      tokenBuy: entry.order.tokenBuy,
+      amountSell: entry.order.amountSell.toString(),
+      amountBuy: entry.order.amountBuy.toString(),
+      expiry: entry.order.expiry.toString(),
+      nonce: entry.order.nonce.toString()
+    },
+    signature: entry.signature
+  }));
+  localStorage.setItem(KNOWN_ORDERS_KEY, JSON.stringify(list));
+}
+
+function upsertKnownOrder(order, signature) {
+  const index = knownOrders.findIndex(
+    (entry) =>
+      entry.order.seller.toLowerCase() === order.seller.toLowerCase() &&
+      entry.order.nonce === order.nonce &&
+      entry.order.tokenSell.toLowerCase() === order.tokenSell.toLowerCase() &&
+      entry.order.tokenBuy.toLowerCase() === order.tokenBuy.toLowerCase()
+  );
+  if (index >= 0) {
+    knownOrders[index] = { order, signature };
+  } else {
+    knownOrders.push({ order, signature });
+  }
+  saveKnownOrders();
+}
+
+async function ensureClients() {
+  if (!window.ethereum) throw new Error("MetaMask not detected");
+  if (!walletClient) {
+    walletClient = createWalletClient({ transport: custom(window.ethereum) });
+  }
+  if (!publicClient) {
+    publicClient = createPublicClient({ transport: custom(window.ethereum) });
+  }
+}
+
+function getExchangeContract() {
+  if (!exchangeAddress) throw new Error("Exchange address missing for current chain in config.json");
+  return {
+    abi: EXCHANGE_ABI,
+    address: exchangeAddress
+  };
+}
+
+async function readTokenDecimals(address) {
+  try {
+    return Number(
+      await publicClient.readContract({
+        abi: ERC20_ABI,
+        address,
+        functionName: "decimals"
+      })
+    );
+  } catch {
+    return 18;
+  }
+}
+
+async function readTokenSymbol(address) {
+  try {
+    return await publicClient.readContract({
+      abi: ERC20_ABI,
+      address,
+      functionName: "symbol"
+    });
+  } catch {
+    return "TOKEN";
+  }
+}
+
+async function ensureAllowance(tokenAddress, owner, spender, requiredAmount, statusSetter) {
+  const allowance = await publicClient.readContract({
+    abi: ERC20_ABI,
+    address: tokenAddress,
+    functionName: "allowance",
+    args: [owner, spender]
+  });
+
+  if (allowance >= requiredAmount) return;
+
+  statusSetter("Approval required. Sending approve transaction...");
+  const hash = await walletClient.writeContract({
+    abi: ERC20_ABI,
+    address: tokenAddress,
+    functionName: "approve",
+    args: [spender, requiredAmount],
+    account
+  });
+  await publicClient.waitForTransactionReceipt({ hash });
 }
 
 async function loadConfig() {
@@ -27,40 +412,50 @@ async function loadConfig() {
 
 async function refreshContractLink() {
   const config = await loadConfig();
-  if (!chainId || !config[String(chainId)]?.address) {
-    contractLine.textContent = "Deploy address not configured for current chain.";
+  exchangeAddress = config["11155111"]?.address || null;
+
+  if (!chainId || !exchangeAddress) {
+    contractLine.textContent = `No deployed contract configured. Switch to Sepolia (11155111).`;
     etherscanLink.hidden = true;
     return;
   }
 
   const chain = Object.values(chains).find((c) => c?.id === Number(chainId));
   const explorer = chain?.blockExplorers?.default?.url;
-  const address = config[String(chainId)].address;
 
-  contractLine.textContent = `Exchange: ${address}`;
+  contractLine.textContent = `Exchange: ${exchangeAddress}`;
 
   if (explorer) {
-    etherscanLink.href = `${explorer}/address/${address}`;
+    etherscanLink.href = `${explorer}/address/${exchangeAddress}`;
     etherscanLink.hidden = false;
   }
 }
 
-async function connectWallet() {
-  if (!window.ethereum) {
-    setStatus("MetaMask not detected.");
-    return;
-  }
+function disconnectWallet() {
+  account = null;
+  chainId = null;
+  exchangeAddress = null;
+  connectButton.textContent = "Connect Wallet";
+  setStatus("Disconnected");
+  contractLine.textContent = "Connect wallet to load contract address.";
+  etherscanLink.hidden = true;
+}
 
-  const walletClient = createWalletClient({ transport: custom(window.ethereum) });
+async function connectWallet() {
+  await ensureClients();
   const [selected] = await walletClient.requestAddresses();
   const id = await walletClient.getChainId();
 
   account = selected;
   chainId = id;
 
-  connectButton.textContent = "Connected";
+  connectButton.textContent = "Disconnect";
   setStatus(`${shortAddress(account)} | Chain ID ${chainId}`);
+  if (chainId !== 11155111) {
+    setStatus(`${shortAddress(account)} | Chain ID ${chainId} (switch to Sepolia 11155111)`);
+  }
   await refreshContractLink();
+  await refreshPublishedHashes();
 }
 
 async function signOrder(event) {
@@ -71,10 +466,12 @@ async function signOrder(event) {
     return;
   }
 
+  await ensureClients();
+
   const tokenSell = document.getElementById("tokenSell").value.trim();
   const tokenBuy = document.getElementById("tokenBuy").value.trim();
-  const amountSell = BigInt(document.getElementById("amountSell").value.trim());
-  const amountBuy = BigInt(document.getElementById("amountBuy").value.trim());
+  const amountSellHuman = document.getElementById("amountSell").value.trim();
+  const amountBuyHuman = document.getElementById("amountBuy").value.trim();
   const expiry = BigInt(document.getElementById("expiry").value.trim());
   const nonce = BigInt(document.getElementById("nonce").value.trim());
 
@@ -85,6 +482,14 @@ async function signOrder(event) {
     signedPayload.textContent = "Missing contract address in config.json for current chain.";
     return;
   }
+
+  const sellDecimals = await readTokenDecimals(tokenSell);
+  const buyDecimals = await readTokenDecimals(tokenBuy);
+  const sellSymbol = await readTokenSymbol(tokenSell);
+  const buySymbol = await readTokenSymbol(tokenBuy);
+
+  const amountSell = parseUnits(amountSellHuman, sellDecimals);
+  const amountBuy = parseUnits(amountBuyHuman, buyDecimals);
 
   const typedData = {
     types: {
@@ -128,18 +533,297 @@ async function signOrder(event) {
       params: [account, JSON.stringify(typedData)]
     });
 
-    signedPayload.textContent = JSON.stringify(
-      {
-        order: typedData.message,
-        signature
-      },
-      null,
-      2
-    );
+    const order = {
+      seller: typedData.message.seller,
+      tokenSell: typedData.message.tokenSell,
+      tokenBuy: typedData.message.tokenBuy,
+      amountSell: BigInt(typedData.message.amountSell),
+      amountBuy: BigInt(typedData.message.amountBuy),
+      expiry: BigInt(typedData.message.expiry),
+      nonce: BigInt(typedData.message.nonce)
+    };
+
+    latestSigned = { order, signature };
+    upsertKnownOrder(order, signature);
+
+    signMeta.textContent = `Sell token: ${sellSymbol} (${sellDecimals} decimals), Buy token: ${buySymbol} (${buyDecimals} decimals)`;
+    signedPayload.textContent = serializeOrderPayload(order, signature);
+    manualOrderPayload.value = signedPayload.textContent;
+    setOrderStatus("Order signed. You can publish it on-chain or share it off-chain.");
   } catch (error) {
     signedPayload.textContent = `Signature failed: ${error?.message ?? String(error)}`;
   }
 }
 
-connectButton.addEventListener("click", connectWallet);
+async function publishSignedOrder() {
+  try {
+    await ensureClients();
+    if (!account || !chainId) throw new Error("Connect wallet first");
+    if (!latestSigned) throw new Error("Sign an order first");
+
+    const exchange = getExchangeContract();
+    const { order, signature } = latestSigned;
+
+    await ensureAllowance(order.tokenSell, account, exchange.address, order.amountSell, setOrderStatus);
+
+    setOrderStatus("Publishing order on-chain...");
+    const hash = await walletClient.writeContract({
+      ...exchange,
+      functionName: "publishOrder",
+      args: [order, signature],
+      account
+    });
+    await publicClient.waitForTransactionReceipt({ hash });
+      await refreshPublishedHashes();
+
+    setOrderStatus(`Order published. Tx: ${hash}`);
+  } catch (error) {
+    setOrderStatus(`Publish failed: ${error?.shortMessage ?? error?.message ?? String(error)}`);
+  }
+}
+
+async function parseManualOrderFromForm() {
+  const payload = parseOrderPayload(manualOrderPayload.value.trim());
+  upsertKnownOrder(payload.order, payload.signature);
+  return payload;
+}
+
+async function approveManualBuyToken() {
+  try {
+    await ensureClients();
+    if (!account || !chainId) throw new Error("Connect wallet first");
+
+    const { order } = await parseManualOrderFromForm();
+    const exchange = getExchangeContract();
+
+    const remaining = await publicClient.readContract({
+      ...exchange,
+      functionName: "remainingAmountSell",
+      args: [order]
+    });
+    if (remaining === 0n) throw new Error("Order already fully filled");
+
+    const requestedHuman = manualFillAmount.value.trim();
+    const sellDecimals = await readTokenDecimals(order.tokenSell);
+    let fillAmountSell = remaining;
+    if (requestedHuman) {
+      fillAmountSell = parseUnits(requestedHuman, sellDecimals);
+      if (fillAmountSell > remaining) fillAmountSell = remaining;
+    }
+    fillAmountSell = floorFillToIntegral(fillAmountSell, order);
+    if (fillAmountSell <= 0n) throw new Error("Fill amount rounds down to zero");
+
+    const fillAmountBuy = (fillAmountSell * order.amountBuy) / order.amountSell;
+    await ensureAllowance(order.tokenBuy, account, exchange.address, fillAmountBuy, setManualStatus);
+    setManualStatus("Buy token approved for this fill amount.");
+  } catch (error) {
+    setManualStatus(`Approve failed: ${error?.shortMessage ?? error?.message ?? String(error)}`);
+  }
+}
+
+async function executeManualFill(event) {
+  event.preventDefault();
+
+  try {
+    await ensureClients();
+    if (!account || !chainId) throw new Error("Connect wallet first");
+
+    const { order, signature } = await parseManualOrderFromForm();
+    const exchange = getExchangeContract();
+    const remaining = await publicClient.readContract({
+      ...exchange,
+      functionName: "remainingAmountSell",
+      args: [order]
+    });
+    if (remaining === 0n) throw new Error("Order already fully filled");
+
+    const sellDecimals = await readTokenDecimals(order.tokenSell);
+    const requestedHuman = manualFillAmount.value.trim();
+    let fillAmountSell = remaining;
+    if (requestedHuman) {
+      fillAmountSell = parseUnits(requestedHuman, sellDecimals);
+      if (fillAmountSell > remaining) fillAmountSell = remaining;
+    }
+
+    fillAmountSell = floorFillToIntegral(fillAmountSell, order);
+    if (fillAmountSell <= 0n) throw new Error("Fill amount rounds down to zero");
+
+    const fillAmountBuy = (fillAmountSell * order.amountBuy) / order.amountSell;
+    await ensureAllowance(order.tokenBuy, account, exchange.address, fillAmountBuy, setManualStatus);
+
+    setManualStatus("Executing fillOrder...");
+    const hash = await walletClient.writeContract({
+      ...exchange,
+      functionName: "fillOrder",
+      args: [order, signature, fillAmountSell],
+      account
+    });
+    await publicClient.waitForTransactionReceipt({ hash });
+    setManualStatus(`fillOrder success. Tx: ${hash}`);
+  } catch (error) {
+    setManualStatus(`fillOrder failed: ${error?.shortMessage ?? error?.message ?? String(error)}`);
+  }
+}
+
+async function refreshPublishedHashes() {
+  try {
+    await ensureClients();
+    if (!exchangeAddress) return;
+
+    const logs = await publicClient.getLogs({
+      address: exchangeAddress,
+      event: EXCHANGE_ABI.find((item) => item.type === "event" && item.name === "OrderPublished"),
+      fromBlock: 0n,
+      toBlock: "latest"
+    });
+
+    const latestByKey = new Map();
+    for (const log of logs) {
+      const order = {
+        seller: String(log.args.seller),
+        tokenSell: String(log.args.tokenSell),
+        tokenBuy: String(log.args.tokenBuy),
+        amountSell: BigInt(log.args.amountSell),
+        amountBuy: BigInt(log.args.amountBuy),
+        expiry: BigInt(log.args.expiry),
+        nonce: BigInt(log.args.nonce)
+      };
+      const signature = String(log.args.signature);
+      const key = `${order.seller.toLowerCase()}-${order.tokenSell.toLowerCase()}-${order.tokenBuy.toLowerCase()}-${order.nonce.toString()}`;
+      latestByKey.set(key, { order, signature });
+      upsertKnownOrder(order, signature);
+    }
+
+    chainPublishedOrders = Array.from(latestByKey.values());
+    setMarketStatus(`Loaded ${chainPublishedOrders.length} published orders from chain.`);
+  } catch (error) {
+    setMarketStatus(`Refresh failed: ${error?.shortMessage ?? error?.message ?? String(error)}`);
+  }
+}
+
+async function executeMarketFill(event) {
+  event.preventDefault();
+
+  try {
+    await ensureClients();
+    if (!account || !chainId) throw new Error("Connect wallet first");
+
+    const tokenSell = marketTokenSell.value.trim().toLowerCase();
+    const tokenBuy = marketTokenBuy.value.trim().toLowerCase();
+    const targetHuman = marketTargetAmount.value.trim();
+    const sellDecimals = await readTokenDecimals(marketTokenSell.value.trim());
+    let remainingTarget = parseUnits(targetHuman, sellDecimals);
+
+    const exchange = getExchangeContract();
+    const candidates = [];
+
+    for (const entry of chainPublishedOrders) {
+      const order = entry.order;
+      if (order.tokenSell.toLowerCase() !== tokenSell || order.tokenBuy.toLowerCase() !== tokenBuy) continue;
+
+      const chainRemaining = await publicClient.readContract({
+        ...exchange,
+        functionName: "remainingAmountSell",
+        args: [order]
+      });
+      if (chainRemaining === 0n) continue;
+
+      candidates.push({ order, signature: entry.signature, remaining: chainRemaining });
+    }
+
+    if (!candidates.length) throw new Error("No matching signed + published orders in local cache");
+
+    candidates.sort((a, b) => {
+      const left = a.order.amountBuy * b.order.amountSell;
+      const right = b.order.amountBuy * a.order.amountSell;
+      if (left < right) return -1;
+      if (left > right) return 1;
+      return 0;
+    });
+
+    const selectedOrders = [];
+    const selectedSignatures = [];
+    const selectedFills = [];
+    let totalBuyTokenNeeded = 0n;
+
+    for (const item of candidates) {
+      if (remainingTarget <= 0n) break;
+      let fillAmountSell = item.remaining < remainingTarget ? item.remaining : remainingTarget;
+      fillAmountSell = floorFillToIntegral(fillAmountSell, item.order);
+      if (fillAmountSell <= 0n) continue;
+
+      const isFillable = await publicClient.readContract({
+        ...exchange,
+        functionName: "isFillable",
+        args: [item.order, item.signature, fillAmountSell, account]
+      });
+      if (!isFillable) continue;
+
+      const fillAmountBuy = (fillAmountSell * item.order.amountBuy) / item.order.amountSell;
+
+      selectedOrders.push(item.order);
+      selectedSignatures.push(item.signature);
+      selectedFills.push(fillAmountSell);
+      totalBuyTokenNeeded += fillAmountBuy;
+      remainingTarget -= fillAmountSell;
+    }
+
+    if (!selectedOrders.length) throw new Error("No fillable published orders found");
+
+    await ensureAllowance(marketTokenBuy.value.trim(), account, exchange.address, totalBuyTokenNeeded, setMarketStatus);
+
+    setMarketStatus(`Executing fillOrders using ${selectedOrders.length} order(s)...`);
+    const hash = await walletClient.writeContract({
+      ...exchange,
+      functionName: "fillOrders",
+      args: [selectedOrders, selectedSignatures, selectedFills],
+      account
+    });
+    await publicClient.waitForTransactionReceipt({ hash });
+
+    if (remainingTarget > 0n) {
+      setMarketStatus(`Partial market fill executed. Tx: ${hash}`);
+    } else {
+      setMarketStatus(`Market fill executed successfully. Tx: ${hash}`);
+    }
+  } catch (error) {
+    setMarketStatus(`Market execution failed: ${error?.shortMessage ?? error?.message ?? String(error)}`);
+  }
+}
+
+function onConnectToggle() {
+  if (account) {
+    disconnectWallet();
+    return;
+  }
+  connectWallet().catch((error) => {
+    setStatus(`Connect failed: ${error?.shortMessage ?? error?.message ?? String(error)}`);
+  });
+}
+
+if (window.ethereum) {
+  window.ethereum.on("accountsChanged", (accounts) => {
+    if (!accounts?.length) {
+      disconnectWallet();
+      return;
+    }
+    account = accounts[0];
+    connectButton.textContent = "Disconnect";
+    setStatus(`${shortAddress(account)} | Chain ID ${chainId ?? "?"}`);
+  });
+
+  window.ethereum.on("chainChanged", (newChainIdHex) => {
+    chainId = Number(BigInt(newChainIdHex));
+    refreshContractLink();
+  });
+}
+
+loadKnownOrders();
+
+connectButton.addEventListener("click", onConnectToggle);
 orderForm.addEventListener("submit", signOrder);
+publishButton.addEventListener("click", publishSignedOrder);
+approveBuyTokenButton.addEventListener("click", approveManualBuyToken);
+manualFillForm.addEventListener("submit", executeManualFill);
+refreshOrdersButton.addEventListener("click", refreshPublishedHashes);
+marketForm.addEventListener("submit", executeMarketFill);
