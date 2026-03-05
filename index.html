@@ -49,7 +49,11 @@
             <input id="amountBuy" type="text" placeholder="20" required />
           </label>
           <label>
-            Expiry (unix timestamp)
+            Expiry (local time)
+            <input id="expiryDatetime" type="datetime-local" required />
+          </label>
+          <label>
+            Expiry (unix timestamp, auto)
             <input id="expiry" type="number" min="1" step="1" required />
           </label>
           <label>

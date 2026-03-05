@@ -1,4 +1,4 @@
-import { createPublicClient, createWalletClient, custom, parseUnits } from "https://esm.sh/viem@2.19.4";
+import { createPublicClient, createWalletClient, custom, parseUnits, formatUnits } from "https://esm.sh/viem@2.19.4";
 import * as chains from "https://esm.sh/viem@2.19.4/chains";
 
 const connectButton = document.getElementById("connectButton");
@@ -6,6 +6,8 @@ const walletStatus = document.getElementById("walletStatus");
 const contractLine = document.getElementById("contractLine");
 const etherscanLink = document.getElementById("etherscanLink");
 const orderForm = document.getElementById("orderForm");
+const expiryInput = document.getElementById("expiry");
+const expiryDatetimeInput = document.getElementById("expiryDatetime");
 const approveSellTokenButton = document.getElementById("approveSellTokenButton");
 const publishButton = document.getElementById("publishButton");
 const signedPayload = document.getElementById("signedPayload");
@@ -145,6 +147,16 @@ const EXCHANGE_ABI = [
   },
   {
     type: "function",
+    name: "canceledNonce",
+    stateMutability: "view",
+    inputs: [
+      { name: "", type: "address" },
+      { name: "", type: "uint256" }
+    ],
+    outputs: [{ name: "", type: "bool" }]
+  },
+  {
+    type: "function",
     name: "remainingAmountSell",
     stateMutability: "view",
     inputs: [
@@ -219,6 +231,13 @@ const ERC20_ABI = [
   },
   {
     type: "function",
+    name: "balanceOf",
+    stateMutability: "view",
+    inputs: [{ name: "account", type: "address" }],
+    outputs: [{ name: "", type: "uint256" }]
+  },
+  {
+    type: "function",
     name: "allowance",
     stateMutability: "view",
     inputs: [
@@ -277,6 +296,41 @@ function shortAddress(address) {
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
 }
 
+function toDatetimeLocalValueFromUnix(unixSeconds) {
+  const date = new Date(Number(unixSeconds) * 1000);
+  const pad = (value) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function toUnixFromDatetimeLocal(value) {
+  if (!value) return null;
+  const ms = new Date(value).getTime();
+  if (!Number.isFinite(ms) || ms <= 0) return null;
+  return Math.floor(ms / 1000);
+}
+
+function syncExpiryFromDatetime() {
+  if (!expiryDatetimeInput || !expiryInput) return;
+  const unix = toUnixFromDatetimeLocal(expiryDatetimeInput.value);
+  if (unix === null) return;
+  expiryInput.value = String(unix);
+}
+
+function syncDatetimeFromExpiry() {
+  if (!expiryDatetimeInput || !expiryInput) return;
+  const unix = Number(expiryInput.value);
+  if (!Number.isFinite(unix) || unix <= 0) return;
+  expiryDatetimeInput.value = toDatetimeLocalValueFromUnix(unix);
+}
+
+function initializeExpiryDefault() {
+  if (!expiryDatetimeInput || !expiryInput) return;
+  if (expiryDatetimeInput.value && expiryInput.value) return;
+  const unix = Math.floor(Date.now() / 1000) + 3600;
+  expiryInput.value = String(unix);
+  expiryDatetimeInput.value = toDatetimeLocalValueFromUnix(unix);
+}
+
 function parseOrderPayload(text) {
   const payload = JSON.parse(text);
   if (!payload?.order || !payload?.signature) throw new Error("Payload requires order and signature");
@@ -327,6 +381,72 @@ function gcd(a, b) {
 function floorFillToIntegral(fillAmountSell, order) {
   const unit = order.amountSell / gcd(order.amountSell, order.amountBuy);
   return (fillAmountSell / unit) * unit;
+}
+
+function getMarketItemLabel(order) {
+  return `${shortAddress(order.seller)}#${order.nonce.toString()}`;
+}
+
+async function getMarketUnfillableReasons(exchange, order, signature, fillAmountSell) {
+  const reasons = [];
+
+  if (!order.seller || order.seller === "0x0000000000000000000000000000000000000000") {
+    reasons.push("invalid seller");
+    return reasons;
+  }
+  if (!order.tokenSell || !order.tokenBuy) {
+    reasons.push("invalid token pair");
+    return reasons;
+  }
+  if (order.tokenSell.toLowerCase() === order.tokenBuy.toLowerCase()) {
+    reasons.push("tokenSell equals tokenBuy");
+    return reasons;
+  }
+  if (order.amountSell <= 0n || order.amountBuy <= 0n) {
+    reasons.push("invalid amount");
+    return reasons;
+  }
+
+  // const now = BigInt(Math.floor(Date.now() / 1000));
+  // if (order.expiry <= now) reasons.push("expired");
+
+  // const canceled = await publicClient.readContract({
+  //   ...exchange,
+  //   functionName: "canceledNonce",
+  //   args: [order.seller, order.nonce]
+  // });
+  // if (canceled) reasons.push("nonce canceled");
+
+  const chainRemaining = await publicClient.readContract({
+    ...exchange,
+    functionName: "remainingAmountSell",
+    args: [order]
+  });
+  if (chainRemaining === 0n) reasons.push("already filled");
+  if (fillAmountSell === 0n) reasons.push("fill amount is zero");
+  if (fillAmountSell > chainRemaining) reasons.push("fill exceeds remaining");
+
+  if ((fillAmountSell * order.amountBuy) % order.amountSell !== 0n) {
+    reasons.push("non-integral ratio");
+  }
+
+  const sellerAllowance = await publicClient.readContract({
+    abi: ERC20_ABI,
+    address: order.tokenSell,
+    functionName: "allowance",
+    args: [order.seller, exchange.address]
+  });
+  if (sellerAllowance < fillAmountSell) reasons.push(`Seller allowance too low with fillAmountSell ${fillAmountSell}, ${sellerAllowance}`);
+
+  const sellerBalance = await publicClient.readContract({
+    abi: ERC20_ABI,
+    address: order.tokenSell,
+    functionName: "balanceOf",
+    args: [order.seller]
+  });
+  if (sellerBalance < fillAmountSell) reasons.push("seller balance low");
+
+  return reasons;
 }
 
 function loadKnownOrders() {
@@ -402,6 +522,10 @@ function getExchangeContract() {
   };
 }
 
+function getCurrentChainConfig() {
+  return Object.values(chains).find((chain) => chain?.id === Number(chainId));
+}
+
 async function readTokenDecimals(address) {
   try {
     return Number(
@@ -444,7 +568,8 @@ async function ensureAllowance(tokenAddress, owner, spender, requiredAmount, sta
     address: tokenAddress,
     functionName: "approve",
     args: [spender, requiredAmount],
-    account
+    account,
+    chain: getCurrentChainConfig()
   });
   await publicClient.waitForTransactionReceipt({ hash });
 }
@@ -524,6 +649,10 @@ async function signOrder(event) {
   const tokenBuy = document.getElementById("tokenBuy").value.trim();
   const amountSellHuman = document.getElementById("amountSell").value.trim();
   const amountBuyHuman = document.getElementById("amountBuy").value.trim();
+  const expiryRaw = document.getElementById("expiry").value.trim();
+  if (!expiryRaw) {
+    syncExpiryFromDatetime();
+  }
   const expiry = BigInt(document.getElementById("expiry").value.trim());
   const nonce = BigInt(document.getElementById("nonce").value.trim());
 
@@ -644,7 +773,8 @@ async function publishSignedOrder() {
       ...exchange,
       functionName: "publishOrder",
       args: [order, signature],
-      account
+      account,
+      chain: getCurrentChainConfig()
     });
     await publicClient.waitForTransactionReceipt({ hash });
       await refreshPublishedHashes();
@@ -677,7 +807,8 @@ async function cancelOrderOnChain(event) {
       ...exchange,
       functionName: "cancelOrder",
       args: [payload.order],
-      account
+      account,
+      chain: getCurrentChainConfig()
     });
     await publicClient.waitForTransactionReceipt({ hash });
     setCancelStatus(`Order canceled. Tx: ${hash}`);
@@ -706,7 +837,9 @@ async function approveManualBuyToken() {
     let fillAmountSell = remaining;
     if (requestedHuman) {
       fillAmountSell = parseUnits(requestedHuman, sellDecimals);
-      if (fillAmountSell > remaining) fillAmountSell = remaining;
+      if (fillAmountSell > remaining) {
+        throw new Error(`Fill amount too large. Remaining sell amount is ${formatUnits(remaining, sellDecimals)}.`);
+      }
     }
     fillAmountSell = floorFillToIntegral(fillAmountSell, order);
     if (fillAmountSell <= 0n) throw new Error("Fill amount rounds down to zero");
@@ -740,13 +873,71 @@ async function executeManualFill(event) {
     let fillAmountSell = remaining;
     if (requestedHuman) {
       fillAmountSell = parseUnits(requestedHuman, sellDecimals);
-      if (fillAmountSell > remaining) fillAmountSell = remaining;
+      if (fillAmountSell > remaining) {
+        throw new Error(`Fill amount too large. Remaining sell amount is ${formatUnits(remaining, sellDecimals)}.`);
+      }
     }
 
     fillAmountSell = floorFillToIntegral(fillAmountSell, order);
     if (fillAmountSell <= 0n) throw new Error("Fill amount rounds down to zero");
 
     const fillAmountBuy = (fillAmountSell * order.amountBuy) / order.amountSell;
+
+    const isFillable = await publicClient.readContract({
+      ...exchange,
+      functionName: "isFillable",
+      args: [order, signature, fillAmountSell, account]
+    });
+
+    if (!isFillable) {
+      const reasons = [];
+      const now = BigInt(Math.floor(Date.now() / 1000));
+      if (order.expiry <= now) reasons.push("Order expired");
+
+      const canceled = await publicClient.readContract({
+        ...exchange,
+        functionName: "canceledNonce",
+        args: [order.seller, order.nonce]
+      });
+      if (canceled) reasons.push("Order nonce canceled by seller");
+
+      const sellerAllowance = await publicClient.readContract({
+        abi: ERC20_ABI,
+        address: order.tokenSell,
+        functionName: "allowance",
+        args: [order.seller, exchange.address]
+      });
+      if (sellerAllowance < fillAmountSell) reasons.push(`Seller allowance too low with fillAmountSell ${fillAmountSell}, ${sellerAllowance}`);
+
+      const sellerBalance = await publicClient.readContract({
+        abi: ERC20_ABI,
+        address: order.tokenSell,
+        functionName: "balanceOf",
+        args: [order.seller]
+      });
+      if (sellerBalance < fillAmountSell) reasons.push("Seller token balance too low with");
+
+      const buyerAllowance = await publicClient.readContract({
+        abi: ERC20_ABI,
+        address: order.tokenBuy,
+        functionName: "allowance",
+        args: [account, exchange.address]
+      });
+      if (buyerAllowance < fillAmountBuy) reasons.push("Buyer allowance too low");
+
+      const buyerBalance = await publicClient.readContract({
+        abi: ERC20_ABI,
+        address: order.tokenBuy,
+        functionName: "balanceOf",
+        args: [account]
+      });
+      if (buyerBalance < fillAmountBuy) reasons.push("Buyer token balance too low");
+
+      if ((fillAmountSell * order.amountBuy) % order.amountSell !== 0n) reasons.push("Fill amount violates integral ratio");
+
+      throw new Error(reasons.length ? `Order not fillable: ${reasons.join("; ")}` : "Order not fillable (signature/nonce/state mismatch)");
+    }
+
     await ensureAllowance(order.tokenBuy, account, exchange.address, fillAmountBuy, setManualStatus);
 
     setManualStatus("Executing fillOrder...");
@@ -754,7 +945,8 @@ async function executeManualFill(event) {
       ...exchange,
       functionName: "fillOrder",
       args: [order, signature, fillAmountSell],
-      account
+      account,
+      chain: getCurrentChainConfig()
     });
     await publicClient.waitForTransactionReceipt({ hash });
     setManualStatus(`fillOrder success. Tx: ${hash}`);
@@ -766,7 +958,10 @@ async function executeManualFill(event) {
 async function refreshPublishedHashes() {
   try {
     await ensureClients();
-    if (!exchangeAddress) return;
+    if (!exchangeAddress) {
+      setMarketStatus("Exchange address not loaded for current chain.");
+      return 0;
+    }
 
     const logs = await publicClient.getLogs({
       address: exchangeAddress,
@@ -794,8 +989,10 @@ async function refreshPublishedHashes() {
 
     chainPublishedOrders = Array.from(latestByKey.values());
     setMarketStatus(`Loaded ${chainPublishedOrders.length} published orders from chain.`);
+    return chainPublishedOrders.length;
   } catch (error) {
     setMarketStatus(`Refresh failed: ${error?.shortMessage ?? error?.message ?? String(error)}`);
+    return 0;
   }
 }
 
@@ -805,6 +1002,12 @@ async function executeMarketFill(event) {
   try {
     await ensureClients();
     if (!account || !chainId) throw new Error("Connect wallet first");
+
+    await refreshContractLink();
+    const publishedCount = await refreshPublishedHashes();
+    if (!publishedCount) {
+      throw new Error("No published orders found on current contract. Publish an order first.");
+    }
 
     const tokenSell = marketTokenSell.value.trim().toLowerCase();
     const tokenBuy = marketTokenBuy.value.trim().toLowerCase();
@@ -829,7 +1032,11 @@ async function executeMarketFill(event) {
       candidates.push({ order, signature: entry.signature, remaining: chainRemaining });
     }
 
-    if (!candidates.length) throw new Error("No matching signed + published orders in local cache");
+    if (!candidates.length) {
+      throw new Error(
+        `No matching published orders for this pair on current contract (tokenSell=${tokenSell}, tokenBuy=${tokenBuy}).`
+      );
+    }
 
     candidates.sort((a, b) => {
       const left = a.order.amountBuy * b.order.amountSell;
@@ -842,20 +1049,28 @@ async function executeMarketFill(event) {
     const selectedOrders = [];
     const selectedSignatures = [];
     const selectedFills = [];
+    const skippedItems = [];
     let totalBuyTokenNeeded = 0n;
 
     for (const item of candidates) {
       if (remainingTarget <= 0n) break;
       let fillAmountSell = item.remaining < remainingTarget ? item.remaining : remainingTarget;
       fillAmountSell = floorFillToIntegral(fillAmountSell, item.order);
-      if (fillAmountSell <= 0n) continue;
+      if (fillAmountSell <= 0n) {
+        skippedItems.push(`${getMarketItemLabel(item.order)}: fill rounds to zero (integral ratio)`);
+        continue;
+      }
 
       const isFillable = await publicClient.readContract({
         ...exchange,
         functionName: "isFillable",
-        args: [item.order, item.signature, fillAmountSell, account]
+        args: [item.order, item.signature, fillAmountSell, "0x0000000000000000000000000000000000000000"]
       });
-      if (!isFillable) continue;
+      if (!isFillable) {
+        const reasons = await getMarketUnfillableReasons(exchange, item.order, item.signature, fillAmountSell);
+        skippedItems.push(`${getMarketItemLabel(item.order)}: ${reasons.join(", ")}`);
+        continue;
+      }
 
       const fillAmountBuy = (fillAmountSell * item.order.amountBuy) / item.order.amountSell;
 
@@ -866,7 +1081,12 @@ async function executeMarketFill(event) {
       remainingTarget -= fillAmountSell;
     }
 
-    if (!selectedOrders.length) throw new Error("No fillable published orders found");
+    if (!selectedOrders.length) {
+      const diagnostics = skippedItems.length
+        ? ` Skipped sample: ${skippedItems.slice(0, 5).join(" | ")}`
+        : "";
+      throw new Error(`No fillable published orders found.${diagnostics}`);
+    }
 
     await ensureAllowance(marketTokenBuy.value.trim(), account, exchange.address, totalBuyTokenNeeded, setMarketStatus);
 
@@ -875,7 +1095,8 @@ async function executeMarketFill(event) {
       ...exchange,
       functionName: "fillOrders",
       args: [selectedOrders, selectedSignatures, selectedFills],
-      account
+      account,
+      chain: getCurrentChainConfig()
     });
     await publicClient.waitForTransactionReceipt({ hash });
 
@@ -917,6 +1138,14 @@ if (window.ethereum) {
 }
 
 loadKnownOrders();
+initializeExpiryDefault();
+
+if (expiryDatetimeInput) {
+  expiryDatetimeInput.addEventListener("change", syncExpiryFromDatetime);
+}
+if (expiryInput) {
+  expiryInput.addEventListener("input", syncDatetimeFromExpiry);
+}
 
 connectButton.addEventListener("click", onConnectToggle);
 approveSellTokenButton.addEventListener("click", approveSellTokenForOrder);
