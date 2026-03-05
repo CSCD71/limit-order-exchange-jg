@@ -490,4 +490,38 @@ describe("LimitOrderExchange scaffold", () => {
       })
     ).rejects.toThrow();
   });
+
+  it("fills an entire order and marks it fully filled", async () => {
+    const order = makeOrder({
+      nonce: 50n,
+      amountSell: parseUnits("10", 18),
+      amountBuy: parseUnits("20", 18),
+      expiry: BigInt(Math.floor(Date.now() / 1000) + 3600)
+    });
+    const signature = await signOrder(order);
+
+    await client.waitForTransactionReceipt({
+      hash: await buyer.writeContract({
+        ...exchange,
+        functionName: "fillOrder",
+        args: [order, signature, parseUnits("10", 18)]
+      })
+    });
+
+    const remaining = await client.readContract({
+      ...exchange,
+      functionName: "remainingAmountSell",
+      args: [order]
+    });
+    expect(remaining).toBe(0n);
+
+    expect(await client.readContract({ ...tokenA, functionName: "balanceOf", args: [seller.account.address] }))
+      .toBe(parseUnits("990", 18));
+    expect(await client.readContract({ ...tokenA, functionName: "balanceOf", args: [buyer.account.address] }))
+      .toBe(parseUnits("10", 18));
+    expect(await client.readContract({ ...tokenB, functionName: "balanceOf", args: [seller.account.address] }))
+      .toBe(parseUnits("20", 18));
+    expect(await client.readContract({ ...tokenB, functionName: "balanceOf", args: [buyer.account.address] }))
+      .toBe(parseUnits("980", 18));
+  });
 });

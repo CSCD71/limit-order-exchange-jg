@@ -4,7 +4,7 @@
   "description": "Sell-only limit-order exchange scaffold",
   "type": "module",
   "scripts": {
-    "test": "vitest --run tests/**",
+    "test": "vitest --run --maxWorkers=1 tests/**",
     "test:watch": "vitest",
     "build": "forge build"
   },
