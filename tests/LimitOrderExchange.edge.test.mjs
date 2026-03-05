@@ -13,6 +13,8 @@ import {
 import { privateKeyToAccount } from "viem/accounts";
 import { foundry } from "viem/chains";
 
+// ai generates these edge case tests
+
 const rpc = http("http://127.0.0.1:8545");
 const client = createPublicClient({ chain: foundry, transport: rpc });
 

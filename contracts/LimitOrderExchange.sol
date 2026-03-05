@@ -142,23 +142,31 @@ contract LimitOrderExchange is EIP712 {
     ) external view returns (bool) {
         bytes32 orderHash = hashOrder(order);
 
+        // Check order structure and signature
         if (!_isOrderCoreValid(order)) return false;
         if (!_isSignatureValid(orderHash, order.seller, signature)) return false;
+
+        // Check order lifecycle state
         if (canceledNonce[order.seller][order.nonce]) return false;
         if (order.expiry <= block.timestamp) return false;
 
         uint256 filled = filledAmountSell[orderHash];
         if (filled >= order.amountSell) return false;
 
+        // Fixed-point safety: all values are integer token units (no floating point)
         uint256 remaining = order.amountSell - filled;
         if (fillAmountSell == 0 || fillAmountSell > remaining) return false;
+        // Enforce exact proportional fill so never round tokenBuy
         if ((fillAmountSell * order.amountBuy) % order.amountSell != 0) return false;
 
+        // Integer ratio: fillAmountBuy = fillAmountSell * (amountBuy / amountSell)
         uint256 fillAmountBuy = (fillAmountSell * order.amountBuy) / order.amountSell;
 
+        // Check if seller still allow transfer and hold enough tokenSell.
         if (IERC20(order.tokenSell).allowance(order.seller, address(this)) < fillAmountSell) return false;
         if (IERC20(order.tokenSell).balanceOf(order.seller) < fillAmountSell) return false;
 
+        // Check buyer allowance and balance for tokenBuy.
         if (buyer != address(0)) {
             if (IERC20(order.tokenBuy).allowance(buyer, address(this)) < fillAmountBuy) return false;
             if (IERC20(order.tokenBuy).balanceOf(buyer) < fillAmountBuy) return false;
@@ -173,6 +181,7 @@ contract LimitOrderExchange is EIP712 {
         uint256 fillAmountSell,
         address buyer
     ) internal returns (uint256 fillAmountBuy) {
+        // Validate order fields and seller signature
         _validateOrderCore(order);
 
         bytes32 orderHash = hashOrder(order);
@@ -185,17 +194,21 @@ contract LimitOrderExchange is EIP712 {
         uint256 filled = filledAmountSell[orderHash];
         if (filled >= order.amountSell) revert Overfill();
 
+        // Fixed-point safety
         uint256 remaining = order.amountSell - filled;
         if (fillAmountSell == 0 || fillAmountSell > remaining) revert Overfill();
 
+        // Enforce exact proportional fill 
         if ((fillAmountSell * order.amountBuy) % order.amountSell != 0) {
             revert NonIntegralFillRatio();
         }
 
+        // Integer ratio
         fillAmountBuy = (fillAmountSell * order.amountBuy) / order.amountSell;
 
         filledAmountSell[orderHash] = filled + fillAmountSell;
 
+        // seller to buyer (tokenSell), buyer to seller (tokenBuy)
         IERC20(order.tokenSell).safeTransferFrom(order.seller, buyer, fillAmountSell);
         IERC20(order.tokenBuy).safeTransferFrom(buyer, order.seller, fillAmountBuy);
 
