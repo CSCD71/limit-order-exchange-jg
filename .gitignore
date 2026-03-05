@@ -19,3 +19,7 @@ node_modules
 *.lock
 *.old
 *.nogit
+
+# Other
+/scripts
+/deployment
