@@ -6,6 +6,7 @@ const walletStatus = document.getElementById("walletStatus");
 const contractLine = document.getElementById("contractLine");
 const etherscanLink = document.getElementById("etherscanLink");
 const orderForm = document.getElementById("orderForm");
+const approveSellTokenButton = document.getElementById("approveSellTokenButton");
 const publishButton = document.getElementById("publishButton");
 const signedPayload = document.getElementById("signedPayload");
 const signMeta = document.getElementById("signMeta");
@@ -16,6 +17,10 @@ const manualOrderPayload = document.getElementById("manualOrderPayload");
 const manualFillAmount = document.getElementById("manualFillAmount");
 const approveBuyTokenButton = document.getElementById("approveBuyTokenButton");
 const manualStatus = document.getElementById("manualStatus");
+
+const cancelOrderForm = document.getElementById("cancelOrderForm");
+const cancelOrderPayload = document.getElementById("cancelOrderPayload");
+const cancelStatus = document.getElementById("cancelStatus");
 
 const marketForm = document.getElementById("marketForm");
 const marketTokenSell = document.getElementById("marketTokenSell");
@@ -44,6 +49,27 @@ const EXCHANGE_ABI = [
         ]
       },
       { name: "signature", type: "bytes" }
+    ],
+    outputs: []
+  },
+  {
+    type: "function",
+    name: "cancelOrder",
+    stateMutability: "nonpayable",
+    inputs: [
+      {
+        name: "order",
+        type: "tuple",
+        components: [
+          { name: "seller", type: "address" },
+          { name: "tokenSell", type: "address" },
+          { name: "tokenBuy", type: "address" },
+          { name: "amountSell", type: "uint256" },
+          { name: "amountBuy", type: "uint256" },
+          { name: "expiry", type: "uint256" },
+          { name: "nonce", type: "uint256" }
+        ]
+      }
     ],
     outputs: []
   },
@@ -222,6 +248,9 @@ let latestSigned = null;
 let knownOrders = [];
 let chainPublishedOrders = [];
 
+const TARGET_CHAIN_ID = 11155111;
+const TARGET_CHAIN_HEX = "0xaa36a7";
+
 const KNOWN_ORDERS_KEY = "loe-known-orders";
 
 function setStatus(text) {
@@ -234,6 +263,10 @@ function setOrderStatus(text) {
 
 function setManualStatus(text) {
   manualStatus.textContent = text;
+}
+
+function setCancelStatus(text) {
+  cancelStatus.textContent = text;
 }
 
 function setMarketStatus(text) {
@@ -349,6 +382,18 @@ async function ensureClients() {
   }
 }
 
+async function requestSwitchToSepolia() {
+  try {
+    await window.ethereum.request({
+      method: "wallet_switchEthereumChain",
+      params: [{ chainId: TARGET_CHAIN_HEX }]
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function getExchangeContract() {
   if (!exchangeAddress) throw new Error("Exchange address missing for current chain in config.json");
   return {
@@ -444,14 +489,21 @@ function disconnectWallet() {
 async function connectWallet() {
   await ensureClients();
   const [selected] = await walletClient.requestAddresses();
-  const id = await walletClient.getChainId();
+  let id = await walletClient.getChainId();
 
   account = selected;
+
+  if (id !== TARGET_CHAIN_ID) {
+    setStatus(`${shortAddress(account)} | Chain ID ${id} (requesting switch to Sepolia...)`);
+    await requestSwitchToSepolia();
+    id = await walletClient.getChainId();
+  }
+
   chainId = id;
 
   connectButton.textContent = "Disconnect";
   setStatus(`${shortAddress(account)} | Chain ID ${chainId}`);
-  if (chainId !== 11155111) {
+  if (chainId !== TARGET_CHAIN_ID) {
     setStatus(`${shortAddress(account)} | Chain ID ${chainId} (switch to Sepolia 11155111)`);
   }
   await refreshContractLink();
@@ -549,9 +601,30 @@ async function signOrder(event) {
     signMeta.textContent = `Sell token: ${sellSymbol} (${sellDecimals} decimals), Buy token: ${buySymbol} (${buyDecimals} decimals)`;
     signedPayload.textContent = serializeOrderPayload(order, signature);
     manualOrderPayload.value = signedPayload.textContent;
+    cancelOrderPayload.value = signedPayload.textContent;
     setOrderStatus("Order signed. You can publish it on-chain or share it off-chain.");
   } catch (error) {
     signedPayload.textContent = `Signature failed: ${error?.message ?? String(error)}`;
+  }
+}
+
+async function approveSellTokenForOrder() {
+  try {
+    await ensureClients();
+    if (!account || !chainId) throw new Error("Connect wallet first");
+
+    const exchange = getExchangeContract();
+    const tokenSell = document.getElementById("tokenSell").value.trim();
+    const amountSellHuman = document.getElementById("amountSell").value.trim();
+    if (!tokenSell || !amountSellHuman) throw new Error("Enter token sell address and amount sell first");
+
+    const sellDecimals = await readTokenDecimals(tokenSell);
+    const amountSell = parseUnits(amountSellHuman, sellDecimals);
+
+    await ensureAllowance(tokenSell, account, exchange.address, amountSell, setOrderStatus);
+    setOrderStatus("Sell token approved for exchange contract.");
+  } catch (error) {
+    setOrderStatus(`Approve sell token failed: ${error?.shortMessage ?? error?.message ?? String(error)}`);
   }
 }
 
@@ -586,6 +659,31 @@ async function parseManualOrderFromForm() {
   const payload = parseOrderPayload(manualOrderPayload.value.trim());
   upsertKnownOrder(payload.order, payload.signature);
   return payload;
+}
+
+async function cancelOrderOnChain(event) {
+  event.preventDefault();
+
+  try {
+    await ensureClients();
+    if (!account || !chainId) throw new Error("Connect wallet first");
+
+    const payloadText = cancelOrderPayload.value.trim();
+    const payload = parseOrderPayload(payloadText);
+    const exchange = getExchangeContract();
+
+    setCancelStatus("Submitting cancelOrder transaction...");
+    const hash = await walletClient.writeContract({
+      ...exchange,
+      functionName: "cancelOrder",
+      args: [payload.order],
+      account
+    });
+    await publicClient.waitForTransactionReceipt({ hash });
+    setCancelStatus(`Order canceled. Tx: ${hash}`);
+  } catch (error) {
+    setCancelStatus(`Cancel failed: ${error?.shortMessage ?? error?.message ?? String(error)}`);
+  }
 }
 
 async function approveManualBuyToken() {
@@ -821,9 +919,11 @@ if (window.ethereum) {
 loadKnownOrders();
 
 connectButton.addEventListener("click", onConnectToggle);
+approveSellTokenButton.addEventListener("click", approveSellTokenForOrder);
 orderForm.addEventListener("submit", signOrder);
 publishButton.addEventListener("click", publishSignedOrder);
 approveBuyTokenButton.addEventListener("click", approveManualBuyToken);
 manualFillForm.addEventListener("submit", executeManualFill);
+cancelOrderForm.addEventListener("submit", cancelOrderOnChain);
 refreshOrdersButton.addEventListener("click", refreshPublishedHashes);
 marketForm.addEventListener("submit", executeMarketFill);

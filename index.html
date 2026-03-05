@@ -57,6 +57,7 @@
             <input id="nonce" type="number" min="0" step="1" required />
           </label>
           <div class="actions">
+            <button id="approveSellTokenButton" type="button" class="btn">Approve Sell Token</button>
             <button type="submit" class="btn">Sign Typed Data</button>
             <button id="publishButton" type="button" class="btn">Publish On-Chain</button>
           </div>
@@ -84,6 +85,20 @@
           </div>
         </form>
         <div id="manualStatus" class="status"></div>
+      </section>
+
+      <section class="panel">
+        <h2>Cancel Order</h2>
+        <form id="cancelOrderForm" class="form">
+          <label>
+            Signed Order JSON
+            <textarea id="cancelOrderPayload" rows="8" placeholder='{"order": {...}, "signature": "0x..."}' required></textarea>
+          </label>
+          <div class="actions">
+            <button id="cancelOrderButton" type="submit" class="btn">Cancel On-Chain</button>
+          </div>
+        </form>
+        <div id="cancelStatus" class="status"></div>
       </section>
 
       <section class="panel">
