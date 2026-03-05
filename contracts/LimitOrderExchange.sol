@@ -34,7 +34,8 @@ contract LimitOrderExchange is EIP712 {
         uint256 amountSell,
         uint256 amountBuy,
         uint256 expiry,
-        uint256 nonce
+        uint256 nonce,
+        bytes signature
     );
 
     event OrderCanceled(bytes32 indexed orderHash, address indexed seller, uint256 indexed nonce);
@@ -90,7 +91,8 @@ contract LimitOrderExchange is EIP712 {
             order.amountSell,
             order.amountBuy,
             order.expiry,
-            order.nonce
+            order.nonce,
+            signature
         );
     }
 
