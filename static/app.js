@@ -1,6 +1,8 @@
 import { createPublicClient, createWalletClient, custom, parseUnits, formatUnits } from "https://esm.sh/viem@2.19.4";
 import * as chains from "https://esm.sh/viem@2.19.4/chains";
 
+// ai help with ui&ux scaffold, error handling and docs
+
 const connectButton = document.getElementById("connectButton");
 const walletStatus = document.getElementById("walletStatus");
 const contractLine = document.getElementById("contractLine");
@@ -17,6 +19,15 @@ const orderStatus = document.getElementById("orderStatus");
 const manualFillForm = document.getElementById("manualFillForm");
 const manualOrderPayload = document.getElementById("manualOrderPayload");
 const manualFillAmount = document.getElementById("manualFillAmount");
+const manualSeller = document.getElementById("manualSeller");
+const manualTokenSell = document.getElementById("manualTokenSell");
+const manualTokenBuy = document.getElementById("manualTokenBuy");
+const manualAmountSellRaw = document.getElementById("manualAmountSellRaw");
+const manualAmountBuyRaw = document.getElementById("manualAmountBuyRaw");
+const manualExpiry = document.getElementById("manualExpiry");
+const manualNonce = document.getElementById("manualNonce");
+const manualSignature = document.getElementById("manualSignature");
+const manualFormToJsonButton = document.getElementById("manualFormToJsonButton");
 const approveBuyTokenButton = document.getElementById("approveBuyTokenButton");
 const manualStatus = document.getElementById("manualStatus");
 
@@ -791,6 +802,45 @@ async function parseManualOrderFromForm() {
   return payload;
 }
 
+function manualFormToJson() {
+  try {
+    const seller = manualSeller.value.trim();
+    const tokenSell = manualTokenSell.value.trim();
+    const tokenBuy = manualTokenBuy.value.trim();
+    const amountSell = manualAmountSellRaw.value.trim();
+    const amountBuy = manualAmountBuyRaw.value.trim();
+    const expiry = manualExpiry.value.trim();
+    const nonce = manualNonce.value.trim();
+    const signature = manualSignature.value.trim();
+
+    if (!seller || !tokenSell || !tokenBuy || !amountSell || !amountBuy || !expiry || !nonce || !signature) {
+      throw new Error("Complete all manual form fields before converting");
+    }
+
+    const payloadText = JSON.stringify(
+      {
+        order: {
+          seller,
+          tokenSell,
+          tokenBuy,
+          amountSell: BigInt(amountSell).toString(),
+          amountBuy: BigInt(amountBuy).toString(),
+          expiry: BigInt(expiry).toString(),
+          nonce: BigInt(nonce).toString()
+        },
+        signature
+      },
+      null,
+      2
+    );
+
+    manualOrderPayload.value = payloadText;
+    setManualStatus("Manual form converted to JSON payload.");
+  } catch (error) {
+    setManualStatus(`Form -> JSON failed: ${error?.message ?? String(error)}`);
+  }
+}
+
 async function cancelOrderOnChain(event) {
   event.preventDefault();
 
@@ -1212,6 +1262,7 @@ connectButton.addEventListener("click", onConnectToggle);
 approveSellTokenButton.addEventListener("click", approveSellTokenForOrder);
 orderForm.addEventListener("submit", signOrder);
 publishButton.addEventListener("click", publishSignedOrder);
+manualFormToJsonButton.addEventListener("click", manualFormToJson);
 approveBuyTokenButton.addEventListener("click", approveManualBuyToken);
 manualFillForm.addEventListener("submit", executeManualFill);
 cancelOrderForm.addEventListener("submit", cancelOrderOnChain);

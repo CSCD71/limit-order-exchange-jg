@@ -76,6 +76,38 @@
         <h2>Manual Order Execution</h2>
         <form id="manualFillForm" class="form">
           <label>
+            Seller
+            <input id="manualSeller" placeholder="0x..." />
+          </label>
+          <label>
+            Token Sell
+            <input id="manualTokenSell" placeholder="0x..." />
+          </label>
+          <label>
+            Token Buy
+            <input id="manualTokenBuy" placeholder="0x..." />
+          </label>
+          <label>
+            Amount Sell (raw uint256)
+            <input id="manualAmountSellRaw" type="text" placeholder="1000000000000000000" />
+          </label>
+          <label>
+            Amount Buy (raw uint256)
+            <input id="manualAmountBuyRaw" type="text" placeholder="2000000000000000000" />
+          </label>
+          <label>
+            Expiry (unix)
+            <input id="manualExpiry" type="number" min="1" step="1" placeholder="1710000000" />
+          </label>
+          <label>
+            Nonce
+            <input id="manualNonce" type="number" min="0" step="1" placeholder="1" />
+          </label>
+          <label>
+            Signature
+            <input id="manualSignature" placeholder="0x..." />
+          </label>
+          <label>
             Signed Order JSON
             <textarea id="manualOrderPayload" rows="10" placeholder='{"order": {...}, "signature": "0x..."}' required></textarea>
           </label>
@@ -84,6 +116,7 @@
             <input id="manualFillAmount" type="text" placeholder="leave empty = max fillable" />
           </label>
           <div class="actions">
+            <button id="manualFormToJsonButton" type="button" class="btn">Form -> JSON</button>
             <button id="approveBuyTokenButton" type="button" class="btn">Approve Buy Token</button>
             <button type="submit" class="btn">Execute fillOrder</button>
           </div>
