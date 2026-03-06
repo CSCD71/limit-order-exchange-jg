@@ -157,8 +157,9 @@ describe("LimitOrderExchange – edge cases & failure conditions", () => {
   });
 
   beforeEach(async () => {
+    await client.request({ method: "anvil_reset", params: [] });
     await deployFixture();
-  });
+  }, 30_000);
 
   // ═══════════════════════════════════════════
   //  Full fill & sequential partial fills

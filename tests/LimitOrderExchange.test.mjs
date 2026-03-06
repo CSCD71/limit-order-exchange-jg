@@ -160,8 +160,9 @@ describe("LimitOrderExchange scaffold", () => {
   });
 
   beforeEach(async () => {
+    await client.request({ method: "anvil_reset", params: [] });
     await deployFixture();
-  });
+  }, 30_000);
 
   // EIP-712
   it("deploys with EIP-712 domain name", async () => {
