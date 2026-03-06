@@ -10,7 +10,7 @@ This project implements a sell-only limit-order exchange on Ethereum
 
 ---
 
-## Local Development (Phase 1)
+## Local Development
 
 ### 1) Install dependencies
 
@@ -40,7 +40,7 @@ Tests are written in JavaScript using [viem](https://viem.sh/) and [vitest](http
 
 ---
 
-## Deploy to Sepolia (Phase 2)
+## Deploy to Sepolia
 
 ## Prerequisites
 
@@ -143,7 +143,7 @@ If you redeploy, replace the address with your new deployment.
 
 ---
 
-## Run Frontend Locally (Phase 3)
+## Run Frontend Locally
 
 The frontend is a static app using:
 

@@ -215,6 +215,7 @@ contract LimitOrderExchange is EIP712 {
         emit OrderFilled(orderHash, buyer, fillAmountSell, fillAmountBuy, order.amountSell - filledAmountSell[orderHash]);
     }
 
+    // helper
     function _validateOrderCore(Order calldata order) internal pure {
         if (order.seller == address(0)) revert InvalidSeller();
         if (order.tokenSell == address(0) || order.tokenBuy == address(0) || order.tokenSell == order.tokenBuy) {

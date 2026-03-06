@@ -163,6 +163,7 @@ describe("LimitOrderExchange scaffold", () => {
     await deployFixture();
   });
 
+  // EIP-712
   it("deploys with EIP-712 domain name", async () => {
     const domainName = await client.readContract({
       ...exchange,
@@ -172,6 +173,7 @@ describe("LimitOrderExchange scaffold", () => {
     expect(domainName[1]).toBe("SellOnlyLimitOrderExchange");
   });
 
+  // [Feature] Publish Signed Order
   it("publishes signed order as event", async () => {
     const order = makeOrder({
       nonce: 1n,
@@ -195,6 +197,7 @@ describe("LimitOrderExchange scaffold", () => {
     expect(parsed.eventName).toBe("OrderPublished");
   });
 
+  // Partial Fill 
   it("fills a signed order partially and updates balances", async () => {
     const order = makeOrder({
       nonce: 2n,
@@ -263,6 +266,7 @@ describe("LimitOrderExchange scaffold", () => {
     expect(remaining).toBe(parseUnits("4", 18));
   });
 
+  // Bulk Fill Orders
   it("supports bulk fill across multiple orders", async () => {
     const order1 = makeOrder({
       nonce: 3n,
@@ -302,6 +306,7 @@ describe("LimitOrderExchange scaffold", () => {
     expect(sellerTokenBAfter).toBe(parseUnits("27", 18));
   });
 
+  // Signature Validation
   it("rejects invalid signature", async () => {
     const order = makeOrder({
       nonce: 5n,
@@ -340,6 +345,7 @@ describe("LimitOrderExchange scaffold", () => {
     ).rejects.toThrow();
   });
 
+  // Cancelled Order Rejection
   it("rejects canceled order", async () => {
     const order = makeOrder({
       nonce: 6n,
@@ -366,6 +372,7 @@ describe("LimitOrderExchange scaffold", () => {
     ).rejects.toThrow();
   });
 
+  // Expiry Validation
   it("rejects expired order", async () => {
     const nowBlock = await client.getBlock();
     const order = makeOrder({
@@ -388,6 +395,7 @@ describe("LimitOrderExchange scaffold", () => {
     ).rejects.toThrow();
   });
 
+  // Partial Fill Ratio Integrity
   it("rejects non-integral partial fill ratio", async () => {
     const order = makeOrder({
       nonce: 8n,
@@ -406,6 +414,7 @@ describe("LimitOrderExchange scaffold", () => {
     ).rejects.toThrow();
   });
 
+  // isFillable Check
   it("isFillable returns true for a valid candidate", async () => {
     const order = makeOrder({
       nonce: 9n,
@@ -423,6 +432,7 @@ describe("LimitOrderExchange scaffold", () => {
     expect(ok).toBe(true);
   });
 
+  // isFillable Approval Check
   it("isFillable returns false when buyer has no approval", async () => {
     const order = makeOrder({
       nonce: 10n,
@@ -448,6 +458,7 @@ describe("LimitOrderExchange scaffold", () => {
     expect(isFillable).toBe(false);
   });
 
+  // Overfill Protect
   it("prevents overfill after full fill", async () => {
     const order = makeOrder({
       nonce: 11n,
@@ -474,6 +485,7 @@ describe("LimitOrderExchange scaffold", () => {
     ).rejects.toThrow();
   });
 
+  // Cancel Authorization
   it("only seller can cancel their nonce", async () => {
     const order = makeOrder({
       nonce: 12n,
@@ -491,6 +503,7 @@ describe("LimitOrderExchange scaffold", () => {
     ).rejects.toThrow();
   });
 
+  // Full Fill
   it("fills an entire order and marks it fully filled", async () => {
     const order = makeOrder({
       nonce: 50n,

@@ -9,7 +9,7 @@
     "build": "forge build"
   },
   "dependencies": {
-    "viem": "^2.45.1",
+    "viem": "2.45.1",
     "vitest": "^4.0.18"
   }
 }
