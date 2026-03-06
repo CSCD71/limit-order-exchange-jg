@@ -5,7 +5,7 @@ This project implements a sell-only limit-order exchange on Ethereum
 
 ## Required Links
 
-- **Deployed dApp (HTTPS):** `<ADD_YOUR_PUBLIC_HTTPS_URL_HERE>`
+- **Deployed dApp (HTTPS):** `https://cscd71.github.io/limit-order-exchange-jg/`
 - **Verified Sepolia Contract:** https://sepolia.etherscan.io/address/0x129cAEE09d999749c397C20eF067cb9907A18b7c
 
 ---
